@@ -271,9 +271,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     g_totalKeys = _countof(g_keys);
 
-    // Calculate default window size
-    g_windowWidth  = g_baseWidth;
-    g_windowHeight = KEY_ROWS * (KEY_HEIGHT + KEY_GAP) + TOP_MARGIN * 2 + KEY_GAP;
+    // Load saved config BEFORE window creation (includes window size)
+    LoadConfig();
+
+    // Apply defaults if config didn't set them (first run)
+    if (g_windowWidth == 0)  g_windowWidth  = g_baseWidth;
+    if (g_windowHeight == 0) g_windowHeight = KEY_ROWS * (KEY_HEIGHT + KEY_GAP) + TOP_MARGIN * 2 + KEY_GAP;
 
     // Create window — always on top, no activation, tool window
     HWND hwnd = CreateWindowExW(
@@ -287,9 +290,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     );
 
     if (!hwnd) return 1;
-
-    // Load saved config (overrides defaults — must load before RegisterHotKey)
-    LoadConfig();
 
     // Register global hotkey for show/hide toggle
     if (!RegisterHotKey(hwnd, TOGGLE_HOTKEY_ID,
@@ -340,6 +340,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_windowWidth  = LOWORD(lParam);
         g_windowHeight = HIWORD(lParam);
         InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_EXITSIZEMOVE: {
+        // Save window size after user finishes resizing
+        RECT wr;
+        GetWindowRect(hwnd, &wr);
+        g_windowWidth  = wr.right - wr.left;
+        g_windowHeight = wr.bottom - wr.top;
+        g_baseWidth    = g_windowWidth - (g_showQuickPanel ? (SIDEBAR_WIDTH + SIDE_MARGIN) : 0);
+        SaveConfig();
         return 0;
     }
 
@@ -1005,10 +1016,15 @@ void LoadConfig() {
     wchar_t line[128];
     while (fgetws(line, 128, f)) {
         UINT mod = 0, vk = 0;
+        int w = 0, h = 0;
         if (swscanf(line, L"hotkey_mod=%u", &mod) == 1)
             g_toggleHotkeyMod = mod;
         if (swscanf(line, L"hotkey_vk=%u", &vk) == 1)
             g_toggleHotkeyVk = vk;
+        if (swscanf(line, L"window_w=%d", &w) == 1)
+            g_windowWidth = w;
+        if (swscanf(line, L"window_h=%d", &h) == 1)
+            g_windowHeight = h;
     }
     fclose(f);
 }
@@ -1019,8 +1035,9 @@ void SaveConfig() {
     GetConfigPath(path, MAX_PATH);
     FILE* f = _wfopen(path, L"w, ccs=UTF-8");
     if (!f) return;
-    fwprintf(f, L"hotkey_mod=%u\nhotkey_vk=%u\n",
-             g_toggleHotkeyMod, g_toggleHotkeyVk);
+    fwprintf(f, L"hotkey_mod=%u\nhotkey_vk=%u\nwindow_w=%d\nwindow_h=%d\n",
+             g_toggleHotkeyMod, g_toggleHotkeyVk,
+             g_windowWidth, g_windowHeight);
     fclose(f);
 }
 
