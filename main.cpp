@@ -82,9 +82,9 @@ struct ShortcutDef {
     BYTE  vk;
 };
 
-constexpr int   SHORTCUT_COUNT   = 7;
-constexpr int   SHORTCUT_COLS    = 2;     // 2 columns in sidebar
-constexpr int   SHORTCUT_ROWS    = 4;     // 4 rows (3 for shortcuts + 1 for toggle)
+constexpr int   SHORTCUT_COUNT   = 8;
+constexpr int   SHORTCUT_COLS    = 2;
+constexpr int   SHORTCUT_ROWS    = 4;
 constexpr int   SIDEBAR_WIDTH    = 280;   // wider for 2 columns
 
 // ── Forward declarations ─────────────────────────────────────────────────────
@@ -108,6 +108,8 @@ void     SaveConfig();
 void     UpdateToggleHint();
 void     ShowHotkeyPicker(HWND parent);
 LRESULT CALLBACK HotkeyPickerProc(HWND, UINT, WPARAM, LPARAM);
+bool     IsAutoStartEnabled();
+void     SetAutoStart(bool enable);
 // ── Global state
 HINSTANCE   g_hInst;
 HFONT       g_hFont      = nullptr;
@@ -135,6 +137,7 @@ bool        g_showQuickPanel = false;
 RECT        g_shortcutRects[SHORTCUT_COUNT] = {};
 int         g_hoveredShort   = -1;
 int         g_pressedShort   = -1;
+bool        g_autoStart      = false;  // registry Run key state
 
 // ── Keyboard Layout
 // QWERTZ (Y↔Z swapped) with standard US symbols — 61 keys
@@ -237,6 +240,7 @@ ShortcutDef g_shortcuts[SHORTCUT_COUNT] = {
     {L"Redo",       L"Ctrl+Y",   1, 'Y'},
     {L"Select All", L"Ctrl+A",   1, 'A'},
     {TOGGLE_BTN_LABEL, TOGGLE_BTN_HINT, 0, 0},   // toggle show/hide (index 6)
+    {L"AutoStart", L"OFF",    0, 0},              // auto-start toggle (index 7)
 };
 // ── Entry Point ──────────────────────────────────────────────────────────────
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
@@ -295,6 +299,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     // Build hotkey hint string from current runtime settings
     UpdateToggleHint();
+
+    // Check auto-start registry state
+    g_autoStart = IsAutoStartEnabled();
+    g_shortcuts[7].hint = g_autoStart ? L"ON" : L"OFF";
 
     // Read Caps Lock initial state
     g_capsLock = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
@@ -427,6 +435,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (si == 6) {
                 // Hide keyboard (toggle button)
                 ShowWindow(hwnd, SW_HIDE);
+            } else if (si == 7) {
+                // Toggle auto-start
+                g_autoStart = !g_autoStart;
+                SetAutoStart(g_autoStart);
+                g_shortcuts[7].hint = g_autoStart ? L"ON" : L"OFF";
+                InvalidateRect(hwnd, &g_shortcutRects[7], FALSE);
             } else {
                 SendShortcut(g_shortcuts[si]);
             }
@@ -808,6 +822,7 @@ void PaintKeyboard(HWND hwnd) {
 
             COLORREF fill = (i == g_pressedShort) ? CLR_KEY_PRESS
                           : (i == g_hoveredShort) ? CLR_KEY_HOVER
+                          : (i == 7 && g_autoStart) ? CLR_KEY_ACTIVE  // AutoStart ON = highlighted
                           : CLR_KEY_BG;
 
             HBRUSH br = CreateSolidBrush(fill);
@@ -1166,4 +1181,40 @@ void ShowHotkeyPicker(HWND parent) {
         UpdateWindow(dlg);
         SetForegroundWindow(dlg);
     }
+}
+
+// ── Auto-start: check if registered in Windows Run key ───────────────────
+bool IsAutoStartEnabled() {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    wchar_t path[MAX_PATH];
+    DWORD size = sizeof(path);
+    DWORD type = 0;
+    LSTATUS result = RegQueryValueExW(hKey, L"VirtualKeyboard", nullptr,
+                                      &type, (BYTE*)path, &size);
+    RegCloseKey(hKey);
+    return (result == ERROR_SUCCESS);
+}
+
+// ── Auto-start: enable/disable via Windows Run registry key ──────────────
+void SetAutoStart(bool enable) {
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            0, KEY_SET_VALUE, &hKey) != ERROR_SUCCESS)
+        return;
+
+    if (enable) {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+        RegSetValueExW(hKey, L"VirtualKeyboard", 0, REG_SZ,
+                       (BYTE*)exePath, (DWORD)((wcslen(exePath) + 1) * sizeof(wchar_t)));
+    } else {
+        RegDeleteValueW(hKey, L"VirtualKeyboard");
+    }
+    RegCloseKey(hKey);
 }

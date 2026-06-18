@@ -34,7 +34,7 @@ Atau manual dari **Developer Command Prompt**:
 
 ```bat
 rc resource.rc
-cl /EHsc /O2 /std:c++17 /W4 main.cpp resource.res /Fe:vkbd.exe user32.lib gdi32.lib
+cl /EHsc /O2 /std:c++17 /W4 main.cpp resource.res /Fe:vkbd.exe user32.lib gdi32.lib advapi32.lib
 ```
 
 ### g++ (MinGW-w64)
@@ -42,7 +42,7 @@ cl /EHsc /O2 /std:c++17 /W4 main.cpp resource.res /Fe:vkbd.exe user32.lib gdi32.
 ```bash
 windres resource.rc -o resource.o
 g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -o vkbd.exe main.cpp resource.o \
-    -luser32 -lgdi32 -municode
+    -luser32 -lgdi32 -ladvapi32 -municode
 ```
 
 Flag `-municode` **wajib** karena entry point `wWinMain`.
