@@ -9,6 +9,8 @@
 #define _UNICODE
 #endif
 
+#define _CRT_SECURE_NO_WARNINGS   // suppress MSVC unsafe-function warnings
+
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
@@ -244,6 +246,17 @@ ShortcutDef g_shortcuts[SHORTCUT_COUNT] = {
 };
 // ── Entry Point ──────────────────────────────────────────────────────────────
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
+    // ── Single-instance guard ────────────────────────────────────────────
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"Global\\VirtualKeyboardApp_SingleInstance");
+    if (hMutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Another instance is already running — notify user then exit
+        MessageBoxW(nullptr, L"Virtual Keyboard sudah berjalan.\nGunakan hotkey atau cek system tray untuk memunculkan.",
+                    L"Virtual Keyboard", MB_OK | MB_ICONINFORMATION);
+        CloseHandle(hMutex);
+        return 0;
+    }
+    // hMutex stays alive; OS releases it on process exit
+
     g_hInst = hInstance;
 
     // Create fonts
