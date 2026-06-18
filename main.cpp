@@ -22,20 +22,27 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 constexpr int   KEY_ROWS          = 5;
 constexpr int   MAX_KEYS_PER_ROW  = 15;
-constexpr int   KEY_HEIGHT        = 48;
-constexpr int   KEY_GAP           = 4;
-constexpr int   TOP_MARGIN        = 8;
-constexpr int   SIDE_MARGIN       = 8;
+constexpr int   KEY_HEIGHT        = 56;   // taller keys like Windows 11 OSK
+constexpr int   KEY_GAP           = 6;    // more gap between keys
+constexpr int   TOP_MARGIN        = 10;
+constexpr int   SIDE_MARGIN       = 10;
 
-// Colors (dark theme, like Windows 11 on-screen keyboard)
-constexpr COLORREF CLR_BG         = RGB(30, 30, 30);
-constexpr COLORREF CLR_KEY_BG     = RGB(50, 50, 50);
-constexpr COLORREF CLR_KEY_HOVER  = RGB(70, 70, 70);
-constexpr COLORREF CLR_KEY_PRESS  = RGB(100, 140, 200);
-constexpr COLORREF CLR_KEY_ACTIVE = RGB(60, 100, 160); // Caps Lock ON, Shift held
-constexpr COLORREF CLR_KEY_BORDER = RGB(90, 90, 90);
-constexpr COLORREF CLR_TEXT       = RGB(230, 230, 230);
-constexpr COLORREF CLR_TEXT_DIM   = RGB(160, 160, 160);
+// Colors — Windows 11 OSK dark theme (matches screenshot)
+constexpr COLORREF CLR_BG            = RGB(36, 36, 36);       // dark charcoal background
+constexpr COLORREF CLR_KEY_BG        = RGB(62, 62, 62);       // medium-dark key face
+constexpr COLORREF CLR_KEY_SPECIAL   = RGB(48, 48, 48);       // slightly darker for special keys (Esc, Shift, etc.)
+constexpr COLORREF CLR_KEY_HOVER     = RGB(82, 82, 82);       // lighter on hover
+constexpr COLORREF CLR_KEY_PRESS     = RGB(0, 120, 215);      // Windows blue accent on press
+constexpr COLORREF CLR_KEY_ACTIVE    = RGB(0, 99, 177);       // active modifier — deeper blue
+constexpr COLORREF CLR_KEY_BORDER    = RGB(80, 80, 80);       // border color
+constexpr COLORREF CLR_KEY_BORDER_BOTTOM = RGB(30, 30, 30);   // bottom-shadow border
+constexpr COLORREF CLR_TEXT          = RGB(255, 255, 255);    // pure white text
+constexpr COLORREF CLR_TEXT_DIM      = RGB(170, 170, 175);    // dimmed text for hints/shift labels
+
+// Accent colors for special keys
+constexpr COLORREF CLR_ACCENT_RED    = RGB(196, 43, 28);      // close button red
+constexpr COLORREF CLR_ACCENT_ORANGE = RGB(210, 105, 30);     // warning/orange
+constexpr COLORREF CLR_ACCENT_GREEN  = RGB(16, 124, 16);      // success/green
 
 // Timer IDs
 constexpr UINT_PTR TIMER_CAPSLOCK   = 1;
@@ -84,9 +91,9 @@ struct ShortcutDef {
     BYTE  vk;
 };
 
-constexpr int   SHORTCUT_COUNT   = 8;
+constexpr int   SHORTCUT_COUNT   = 10;
 constexpr int   SHORTCUT_COLS    = 2;
-constexpr int   SHORTCUT_ROWS    = 4;
+constexpr int   SHORTCUT_ROWS    = 5;
 constexpr int   SIDEBAR_WIDTH    = 280;   // wider for 2 columns
 
 // ── Forward declarations ─────────────────────────────────────────────────────
@@ -104,7 +111,6 @@ void     StartKeyRepeat(HWND hwnd, int keyIndex);
 void     StopKeyRepeat(HWND hwnd);
 void     SendShortcut(const ShortcutDef& sc);
 int      HitTestShortcut(POINT pt);
-void     ResizeWindowForPanel(HWND hwnd);
 void     LoadConfig();
 void     SaveConfig();
 void     UpdateToggleHint();
@@ -112,12 +118,13 @@ void     ShowHotkeyPicker(HWND parent);
 LRESULT CALLBACK HotkeyPickerProc(HWND, UINT, WPARAM, LPARAM);
 bool     IsAutoStartEnabled();
 void     SetAutoStart(bool enable);
+void     RecreateFonts();
 // ── Global state
 HINSTANCE   g_hInst;
 HFONT       g_hFont      = nullptr;
 HFONT       g_hFontSmall = nullptr;
 int         g_totalKeys  = 0;
-int         g_rowCounts[KEY_ROWS] = {14, 14, 13, 12, 8};
+int         g_rowCounts[KEY_ROWS] = {14, 14, 13, 12, 12};
 int         g_hoveredKey = -1;
 int         g_pressedKey = -1;
 bool        g_shiftDown  = false;
@@ -125,112 +132,118 @@ bool        g_ctrlDown   = false;
 bool        g_altDown    = false;
 bool        g_winDown    = false;
 bool        g_capsLock   = false;
-bool        g_shiftLatched = false;  // Sticky Shift
-bool        g_ctrlLatched  = false;  // Sticky Ctrl
-bool        g_altLatched   = false;  // Sticky Alt
-bool        g_winLatched   = false;  // Sticky Win
-int         g_windowWidth  = 900;
+BYTE        g_shiftLatchedVk = 0;   // Sticky Shift: VK_LSHIFT or VK_RSHIFT, 0=none
+BYTE        g_ctrlLatchedVk  = 0;   // Sticky Ctrl: VK_LCONTROL or VK_RCONTROL, 0=none
+BYTE        g_altLatchedVk   = 0;   // Sticky Alt: VK_LMENU or VK_RMENU, 0=none
+BYTE        g_winLatchedVk   = 0;   // Sticky Win: VK_LWIN or VK_RWIN, 0=none
+int         g_windowWidth  = 950;
 int         g_windowHeight = 0;
-int         g_baseWidth    = 900;  // keyboard width without sidebar
+int         g_baseWidth    = 950;  // keyboard width without sidebar
 int         g_repeatPhase  = 0;    // 0=idle, 1=initial delay, 2=fast repeat
+int         g_fontSize     = 20;   // base font size (persisted in config)
+static wchar_t g_fontHintBuf[16] = {};  // font size hint buffer
 
 // Quick-panel state
-bool        g_showQuickPanel = false;
+bool        g_showQuickPanel = true;
 RECT        g_shortcutRects[SHORTCUT_COUNT] = {};
 int         g_hoveredShort   = -1;
 int         g_pressedShort   = -1;
 bool        g_autoStart      = false;  // registry Run key state
 
 // ── Keyboard Layout
-// QWERTZ (Y↔Z swapped) with standard US symbols — 61 keys
+// QWERTY standard US layout — 61 keys
 KeyDef g_keys[] = {
     // Row 0: Esc, 1-0, -, =, Backspace (14 keys)
-    {L"Esc", nullptr,     VK_ESCAPE,    0.75f, false, false, false},
-    {L"1",   L"!",        '1',          0.85f, false, false, false},
-    {L"2",   L"@",        '2',          0.85f, false, false, false},
-    {L"3",   L"#",        '3',          0.85f, false, false, false},
-    {L"4",   L"$",        '4',          0.85f, false, false, false},
-    {L"5",   L"%",        '5',          0.85f, false, false, false},
-    {L"6",   L"^",        '6',          0.85f, false, false, false},
-    {L"7",   L"&",        '7',          0.85f, false, false, false},
-    {L"8",   L"*",        '8',          0.85f, false, false, false},
-    {L"9",   L"(",        '9',          0.85f, false, false, false},
-    {L"0",   L")",        '0',          0.85f, false, false, false},
-    {L"-",   L"_",        VK_OEM_MINUS, 0.85f, false, false, false},
-    {L"=",   L"+",        VK_OEM_PLUS,  0.85f, false, false, false},
-    {L"Bcksp", nullptr,  VK_BACK,      1.50f, false, false, true},   // Backspace
+    {L"Esc",   nullptr,   VK_ESCAPE,    0.75f, false, false, false},
+    {L"1",     L"!",      '1',          0.85f, false, false, false},
+    {L"2",     L"@",      '2',          0.85f, false, false, false},
+    {L"3",     L"#",      '3',          0.85f, false, false, false},
+    {L"4",     L"$",      '4',          0.85f, false, false, false},
+    {L"5",     L"%",      '5',          0.85f, false, false, false},
+    {L"6",     L"^",      '6',          0.85f, false, false, false},
+    {L"7",     L"&",      '7',          0.85f, false, false, false},
+    {L"8",     L"*",      '8',          0.85f, false, false, false},
+    {L"9",     L"(",      '9',          0.85f, false, false, false},
+    {L"0",     L")",      '0',          0.85f, false, false, false},
+    {L"-",     L"_",      VK_OEM_MINUS, 0.85f, false, false, false},
+    {L"=",     L"+",      VK_OEM_PLUS,  0.85f, false, false, false},
+    {L"Bcksp", nullptr,   VK_BACK,      1.50f, false, false, true},
 
-    // Row 1: Tab, Q-P, [, ], \ — Z replaces Y (14 keys)
-    {L"Tab", nullptr,     VK_TAB,       1.25f, false, false, false},
-    {L"q",   L"Q",        'Q',          1.00f, false, false, false},
-    {L"w",   L"W",        'W',          1.00f, false, false, false},
-    {L"e",   L"E",        'E',          1.00f, false, false, false},
-    {L"r",   L"R",        'R',          1.00f, false, false, false},
-    {L"t",   L"T",        'T',          1.00f, false, false, false},
-    {L"z",   L"Z",        'Z',          1.00f, false, false, false},   // QWERTZ swap
-    {L"u",   L"U",        'U',          1.00f, false, false, false},
-    {L"i",   L"I",        'I',          1.00f, false, false, false},
-    {L"o",   L"O",        'O',          1.00f, false, false, false},
-    {L"p",   L"P",        'P',          1.00f, false, false, false},
-    {L"[",   L"{",        VK_OEM_4,     1.00f, false, false, false},
-    {L"]",   L"}",        VK_OEM_6,     1.00f, false, false, false},
-    {L"\\",  L"|",        VK_OEM_5,     1.25f, false, false, false},
+    // Row 1: Tab, Q-P, [, ], \ (14 keys) — QWERTY order
+    {L"Tab",   nullptr,   VK_TAB,       1.25f, false, false, false},
+    {L"q",     L"Q",      'Q',          1.00f, false, false, false},
+    {L"w",     L"W",      'W',          1.00f, false, false, false},
+    {L"e",     L"E",      'E',          1.00f, false, false, false},
+    {L"r",     L"R",      'R',          1.00f, false, false, false},
+    {L"t",     L"T",      'T',          1.00f, false, false, false},
+    {L"y",     L"Y",      'Y',          1.00f, false, false, false},
+    {L"u",     L"U",      'U',          1.00f, false, false, false},
+    {L"i",     L"I",      'I',          1.00f, false, false, false},
+    {L"o",     L"O",      'O',          1.00f, false, false, false},
+    {L"p",     L"P",      'P',          1.00f, false, false, false},
+    {L"[",     L"{",      VK_OEM_4,     1.00f, false, false, false},
+    {L"]",     L"}",      VK_OEM_6,     1.00f, false, false, false},
+    {L"\\",    L"|",      VK_OEM_5,     1.25f, false, false, false},
 
     // Row 2: Caps, A-L, ;, ', Enter (13 keys)
-    {L"Caps", nullptr,    VK_CAPITAL,   1.50f, false, true,  false},
-    {L"a",   L"A",        'A',          1.00f, false, false, false},
-    {L"s",   L"S",        'S',          1.00f, false, false, false},
-    {L"d",   L"D",        'D',          1.00f, false, false, false},
-    {L"f",   L"F",        'F',          1.00f, false, false, false},
-    {L"g",   L"G",        'G',          1.00f, false, false, false},
-    {L"h",   L"H",        'H',          1.00f, false, false, false},
-    {L"j",   L"J",        'J',          1.00f, false, false, false},
-    {L"k",   L"K",        'K',          1.00f, false, false, false},
-    {L"l",   L"L",        'L',          1.00f, false, false, false},
-    {L";",   L":",        VK_OEM_1,     1.00f, false, false, false},
-    {L"'",   L"\"",       VK_OEM_7,     1.00f, false, false, false},
+    {L"Caps",  nullptr,   VK_CAPITAL,   1.50f, false, true,  false},
+    {L"a",     L"A",      'A',          1.00f, false, false, false},
+    {L"s",     L"S",      'S',          1.00f, false, false, false},
+    {L"d",     L"D",      'D',          1.00f, false, false, false},
+    {L"f",     L"F",      'F',          1.00f, false, false, false},
+    {L"g",     L"G",      'G',          1.00f, false, false, false},
+    {L"h",     L"H",      'H',          1.00f, false, false, false},
+    {L"j",     L"J",      'J',          1.00f, false, false, false},
+    {L"k",     L"K",      'K',          1.00f, false, false, false},
+    {L"l",     L"L",      'L',          1.00f, false, false, false},
+    {L";",     L":",      VK_OEM_1,     1.00f, false, false, false},
+    {L"'",     L"\"",     VK_OEM_7,     1.00f, false, false, false},
     {L"Enter", nullptr,   VK_RETURN,    1.75f, false, false, true},
 
-    // Row 3: Shift, Y-M, ,, ., /, Shift — Y replaces Z (12 keys)
+    // Row 3: Shift, Z-M, ,, ., /, Shift (12 keys) — QWERTY: z first
     {L"Shift", nullptr,   VK_LSHIFT,    1.75f, true,  false, false},
-    {L"y",   L"Y",        'Y',          1.00f, false, false, false},   // QWERTZ swap
-    {L"x",   L"X",        'X',          1.00f, false, false, false},
-    {L"c",   L"C",        'C',          1.00f, false, false, false},
-    {L"v",   L"V",        'V',          1.00f, false, false, false},
-    {L"b",   L"B",        'B',          1.00f, false, false, false},
-    {L"n",   L"N",        'N',          1.00f, false, false, false},
-    {L"m",   L"M",        'M',          1.00f, false, false, false},
-    {L",",   L"<",        VK_OEM_COMMA, 1.00f, false, false, false},
-    {L".",   L">",        VK_OEM_PERIOD,1.00f, false, false, false},
-    {L"/",   L"?",        VK_OEM_2,     1.00f, false, false, false},
+    {L"z",     L"Z",      'Z',          1.00f, false, false, false},
+    {L"x",     L"X",      'X',          1.00f, false, false, false},
+    {L"c",     L"C",      'C',          1.00f, false, false, false},
+    {L"v",     L"V",      'V',          1.00f, false, false, false},
+    {L"b",     L"B",      'B',          1.00f, false, false, false},
+    {L"n",     L"N",      'N',          1.00f, false, false, false},
+    {L"m",     L"M",      'M',          1.00f, false, false, false},
+    {L",",     L"<",      VK_OEM_COMMA, 1.00f, false, false, false},
+    {L".",     L">",      VK_OEM_PERIOD,1.00f, false, false, false},
+    {L"/",     L"?",      VK_OEM_2,     1.00f, false, false, false},
     {L"Shift", nullptr,   VK_RSHIFT,    2.00f, true,  false, false},
 
-    // Row 4: Ctrl, Win, Alt, Space, Alt, Win, Menu, Ctrl (8 keys)
-    {L"Ctrl", nullptr,    VK_LCONTROL,  1.25f, true,  false, false},
-    {L"Win", nullptr,     VK_LWIN,      1.00f, true,  false, false},
-    {L"Alt", nullptr,     VK_LMENU,     1.00f, true,  false, false},
-    {L"",   nullptr,      VK_SPACE,     5.00f, false, false, true},
-    {L"Alt", nullptr,     VK_RMENU,     1.00f, true,  false, false},
-    {L"Win", nullptr,     VK_RWIN,      1.00f, true,  false, false},
-    {L"Menu", nullptr,    VK_APPS,      1.00f, false, false, false},
-    {L"Ctrl", nullptr,    VK_RCONTROL,  1.25f, true,  false, false},
+    // Row 4: Ctrl, Win, Alt, Space, Alt, Ctrl, ←, ↑, ↓, →, Home, End (12 keys)
+    {L"Ctrl",  nullptr,   VK_LCONTROL,  1.25f, true,  false, false},
+    {L"Win",   nullptr,   VK_LWIN,      1.00f, true,  false, false},
+    {L"Alt",   nullptr,   VK_LMENU,     1.00f, true,  false, false},
+    {L"",      nullptr,   VK_SPACE,     5.00f, false, false, true},
+    {L"Alt",   nullptr,   VK_RMENU,     1.00f, true,  false, false},
+    {L"Ctrl",  nullptr,   VK_RCONTROL,  1.00f, true,  false, false},
+    {L"\u2190",nullptr,   VK_LEFT,      0.85f, false, false, false},
+    {L"\u2191",nullptr,   VK_UP,        0.85f, false, false, false},
+    {L"\u2193",nullptr,   VK_DOWN,      0.85f, false, false, false},
+    {L"\u2192",nullptr,   VK_RIGHT,     0.85f, false, false, false},
+    {L"Home",  nullptr,   VK_HOME,      0.85f, false, false, false},
+    {L"End",   nullptr,   VK_END,       0.85f, false, false, false},
 };
 
 KeyState g_keyStates[_countof(g_keys)] = {};
 
-// Total: 14 + 14 + 13 + 12 + 8 = 61 keys (QWERTZ-US layout)
+// Total: 14 + 14 + 13 + 12 + 12 = 65 keys
 // Row 0: 14 keys (indices 0-13)
 // Row 1: 14 keys (indices 14-27)
 // Row 2: 13 keys (indices 28-40)
 // Row 3: 12 keys (indices 41-52)
-// Row 4: 8 keys  (indices 53-60)
+// Row 4: 12 keys (indices 53-64)
 
 int g_rowDefs[KEY_ROWS][MAX_KEYS_PER_ROW] = {
     { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13},                        // 14
     {14,15,16,17,18,19,20,21,22,23,24,25,26,27},                         // 14
     {28,29,30,31,32,33,34,35,36,37,38,39,40},                            // 13
     {41,42,43,44,45,46,47,48,49,50,51,52},                               // 12
-    {53,54,55,56,57,58,59,60}                                             // 8
+    {53,54,55,56,57,58,59,60,61,62,63,64}                                // 12
 };
 
 // ── Shortcut panel definitions ───────────────────────────────────────────────
@@ -243,6 +256,8 @@ ShortcutDef g_shortcuts[SHORTCUT_COUNT] = {
     {L"Select All", L"Ctrl+A",   1, 'A'},
     {TOGGLE_BTN_LABEL, TOGGLE_BTN_HINT, 0, 0},   // toggle show/hide (index 6)
     {L"AutoStart", L"OFF",    0, 0},              // auto-start toggle (index 7)
+    {L"Font +",    L"20",    0, 0},               // increase font (index 8)
+    {L"Font \u2212",L"20",    0, 0},              // decrease font (index 9)
 };
 // ── Entry Point ──────────────────────────────────────────────────────────────
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
@@ -259,17 +274,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     g_hInst = hInstance;
 
-    // Create fonts
-    g_hFont = CreateFontW(
-        20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"
-    );
-    g_hFontSmall = CreateFontW(
-        14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"
-    );
+    // Create fonts — crisp Segoe UI like Windows 11 OSK
+    RecreateFonts();
 
     // Register window class
     const wchar_t CLASS_NAME[] = L"VirtualKeyboardWnd";
@@ -284,12 +290,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
 
     g_totalKeys = _countof(g_keys);
 
-    // Load saved config BEFORE window creation (includes window size)
+    // Load saved config BEFORE window creation (includes window size + font size)
     LoadConfig();
+    RecreateFonts();  // apply font size from config
 
     // Apply defaults if config didn't set them (first run)
-    if (g_windowWidth == 0)  g_windowWidth  = g_baseWidth;
-    if (g_windowHeight == 0) g_windowHeight = KEY_ROWS * (KEY_HEIGHT + KEY_GAP) + TOP_MARGIN * 2 + KEY_GAP;
+    if (g_windowWidth == 0)  g_windowWidth  = g_baseWidth + SIDEBAR_WIDTH + SIDE_MARGIN;
+    if (g_windowHeight == 0) g_windowHeight = KEY_ROWS * (KEY_HEIGHT + KEY_GAP) + TOP_MARGIN * 2 + KEY_GAP + 30; // +30 for title bar
 
     // Create window — always on top, no activation, tool window
     HWND hwnd = CreateWindowExW(
@@ -316,6 +323,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     // Check auto-start registry state
     g_autoStart = IsAutoStartEnabled();
     g_shortcuts[7].hint = g_autoStart ? L"ON" : L"OFF";
+
+    // Initialize font size hints
+    swprintf(g_fontHintBuf, 16, L"%d", g_fontSize);
+    g_shortcuts[8].hint = g_fontHintBuf;
+    g_shortcuts[9].hint = g_fontHintBuf;
 
     // Read Caps Lock initial state
     g_capsLock = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
@@ -465,6 +477,28 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 SetAutoStart(g_autoStart);
                 g_shortcuts[7].hint = g_autoStart ? L"ON" : L"OFF";
                 InvalidateRect(hwnd, &g_shortcutRects[7], FALSE);
+            } else if (si == 8) {
+                // Increase font size
+                if (g_fontSize < 40) {
+                    g_fontSize += 2;
+                    RecreateFonts();
+                    swprintf(g_fontHintBuf, 16, L"%d", g_fontSize);
+                    g_shortcuts[8].hint = g_fontHintBuf;
+                    g_shortcuts[9].hint = g_fontHintBuf;
+                    SaveConfig();
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (si == 9) {
+                // Decrease font size
+                if (g_fontSize > 8) {
+                    g_fontSize -= 2;
+                    RecreateFonts();
+                    swprintf(g_fontHintBuf, 16, L"%d", g_fontSize);
+                    g_shortcuts[8].hint = g_fontHintBuf;
+                    g_shortcuts[9].hint = g_fontHintBuf;
+                    SaveConfig();
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
             } else {
                 SendShortcut(g_shortcuts[si]);
             }
@@ -475,14 +509,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int idx = HitTestKey(pt);
         if (idx >= 0) {
             KeyDef& kd = g_keys[idx];
-
-            // Menu key → toggle quick panel
-            if (kd.vk == VK_APPS) {
-                g_showQuickPanel = !g_showQuickPanel;
-                ResizeWindowForPanel(hwnd);
-                InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
 
             if (kd.isModifier) {
                 // Modifier key: toggle latch
@@ -697,15 +723,6 @@ int HitTestShortcut(POINT pt) {
     return -1;
 }
 
-// ── Resize window to fit or hide the sidebar ─────────────────────────────────
-void ResizeWindowForPanel(HWND hwnd) {
-    int newW = g_baseWidth + (g_showQuickPanel ? (SIDEBAR_WIDTH + SIDE_MARGIN) : 0);
-    RECT wr;
-    GetWindowRect(hwnd, &wr);
-    SetWindowPos(hwnd, nullptr, 0, 0, newW, wr.bottom - wr.top,
-                 SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
-}
-
 // ── Send a shortcut key combination ──────────────────────────────────────────
 void SendShortcut(const ShortcutDef& sc) {
     INPUT inputs[4] = {};
@@ -779,103 +796,178 @@ void PaintKeyboard(HWND hwnd) {
         KeyDef& kd = g_keys[i];
         KeyState& ks = g_keyStates[i];
 
+        bool isSpecialKey = kd.isModifier || kd.isToggle || kd.isSpecial
+                         || kd.vk == VK_ESCAPE || kd.vk == VK_TAB
+                         || kd.vk == VK_APPS;
+
         // Determine fill color
-        COLORREF fill = CLR_KEY_BG;
+        COLORREF fill;
         if (ks.pressed) {
             fill = CLR_KEY_PRESS;
         } else if (ks.active) {
             fill = CLR_KEY_ACTIVE;
         } else if (ks.hovered) {
             fill = CLR_KEY_HOVER;
+        } else if (isSpecialKey) {
+            fill = CLR_KEY_SPECIAL;
+        } else {
+            fill = CLR_KEY_BG;
         }
 
-        // Draw key background (rounded rect via regions)
+        // Bottom shadow border (1px darker line at bottom for 3D feel)
+        if (!ks.pressed) {
+            HBRUSH shadowBrush = CreateSolidBrush(CLR_KEY_BORDER_BOTTOM);
+            HPEN nullPen = (HPEN)GetStockObject(NULL_PEN);
+            HBRUSH oldBr2 = (HBRUSH)SelectObject(memDC, shadowBrush);
+            HPEN oldPn2 = (HPEN)SelectObject(memDC, nullPen);
+            RoundRect(memDC, r.left, r.top + 2, r.right, r.bottom + 2, 10, 10);
+            SelectObject(memDC, oldBr2);
+            SelectObject(memDC, oldPn2);
+            DeleteObject(shadowBrush);
+        }
+
+        // Key face background (rounded rect, larger radius like Win11 OSK)
         HBRUSH keyBrush = CreateSolidBrush(fill);
-        HPEN borderPen  = CreatePen(PS_SOLID, 1, (ks.hovered || ks.pressed || ks.active) ? CLR_KEY_PRESS : CLR_KEY_BORDER);
+        HPEN borderPen;
+        if (ks.pressed || ks.active) {
+            borderPen = CreatePen(PS_SOLID, 1, CLR_KEY_PRESS);
+        } else if (ks.hovered) {
+            borderPen = CreatePen(PS_SOLID, 1, RGB(110, 110, 110));
+        } else {
+            borderPen = CreatePen(PS_SOLID, 1, CLR_KEY_BORDER);
+        }
         HBRUSH oldBrush = (HBRUSH)SelectObject(memDC, keyBrush);
         HPEN oldPen     = (HPEN)SelectObject(memDC, borderPen);
 
-        // Rounded rectangle (small radius)
-        int radius = 4;
-        RoundRect(memDC, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
+        // Large corner radius like Windows 11 OSK (8px)
+        RoundRect(memDC, r.left, r.top, r.right, r.bottom, 10, 10);
 
         SelectObject(memDC, oldBrush);
         SelectObject(memDC, oldPen);
         DeleteObject(keyBrush);
         DeleteObject(borderPen);
 
-        // Determine label
-        const wchar_t* label = kd.label;
-        bool shiftActive = g_shiftDown || g_shiftLatched;
-        if (shiftActive && kd.shiftLabel != nullptr && kd.shiftLabel[0] != 0) {
-            label = kd.shiftLabel;
-        }
-        // For letter keys: uppercase if shift or caps (but not both)
-        if (!kd.isModifier && !kd.isToggle && !kd.isSpecial) {
-            bool upper = shiftActive ^ g_capsLock;
-            if (upper && kd.shiftLabel && wcslen(kd.shiftLabel) == 1 && iswalpha(kd.shiftLabel[0])) {
-                label = kd.shiftLabel;
-            } else if (!upper && iswalpha(kd.label[0])) {
-                label = kd.label;
+        // Determine main label and hint label (dual-label keys swap on shift)
+        bool shiftActive = g_shiftDown || g_shiftLatchedVk != 0;
+        bool hasDualLabel = !kd.isModifier && !kd.isToggle && !kd.isSpecial
+                          && kd.shiftLabel != nullptr && kd.shiftLabel[0] != 0;
+
+        const wchar_t* mainLabel = kd.label;
+        const wchar_t* hintLabel = nullptr;
+
+        if (hasDualLabel) {
+            if (iswalpha(kd.label[0])) {
+                // Letter key: shift/caps XOR determines case, hint is the opposite
+                bool upper = shiftActive ^ g_capsLock;
+                if (upper) {
+                    mainLabel = kd.shiftLabel;
+                    hintLabel = kd.label;
+                } else {
+                    mainLabel = kd.label;
+                    hintLabel = kd.shiftLabel;
+                }
+            } else {
+                // Number/symbol key: shift swaps which label is primary
+                if (shiftActive) {
+                    mainLabel = kd.shiftLabel;
+                    hintLabel = kd.label;
+                } else {
+                    mainLabel = kd.label;
+                    hintLabel = kd.shiftLabel;
+                }
             }
         }
 
-        // Select font
-        HFONT useFont = (kd.isSpecial || kd.isModifier || kd.isToggle) ? g_hFontSmall : g_hFont;
+        // Select font — use larger font for letter/number keys, smaller for special
+        HFONT useFont = isSpecialKey ? g_hFontSmall : g_hFont;
         HFONT oldFont = (HFONT)SelectObject(memDC, useFont);
 
-        // Measure text
+        // Main label: bottom-left for dual-label keys, centered otherwise
         SIZE textSize;
-        GetTextExtentPoint32W(memDC, label, (int)wcslen(label), &textSize);
+        GetTextExtentPoint32W(memDC, mainLabel, (int)wcslen(mainLabel), &textSize);
 
-        int tx = r.left + (r.right - r.left - textSize.cx) / 2;
-        int ty = r.top  + (r.bottom - r.top - textSize.cy) / 2;
+        int keyW = r.right - r.left;
+        int keyH = r.bottom - r.top;
 
-        // Text color
+        int tx, ty;
+        if (hasDualLabel) {
+            tx = r.left + 7;
+            ty = r.bottom - textSize.cy - 6;
+        } else {
+            tx = r.left + (keyW - textSize.cx) / 2;
+            ty = r.top  + (keyH - textSize.cy) / 2;
+        }
+
         SetTextColor(memDC, CLR_TEXT);
-        TextOutW(memDC, tx, ty, label, (int)wcslen(label));
+        TextOutW(memDC, tx, ty, mainLabel, (int)wcslen(mainLabel));
+
+        // Draw the opposite label as a small hint at top-right
+        if (hintLabel) {
+            HFONT oldF2 = (HFONT)SelectObject(memDC, g_hFontSmall);
+            SetTextColor(memDC, CLR_TEXT_DIM);
+            SIZE shSize;
+            GetTextExtentPoint32W(memDC, hintLabel, (int)wcslen(hintLabel), &shSize);
+            int shx = r.right - shSize.cx - 6;
+            int shy = r.top + 4;
+            TextOutW(memDC, shx, shy, hintLabel, (int)wcslen(hintLabel));
+            SelectObject(memDC, oldF2);
+            SetTextColor(memDC, CLR_TEXT);
+        }
 
         SelectObject(memDC, oldFont);
     }
 
-    // ── Draw shortcut grid (same key style as main keyboard) ───────────────
+    // ── Draw shortcut grid (right sidebar) ────────────────────────────────
     if (g_showQuickPanel) {
         for (int i = 0; i < SHORTCUT_COUNT; i++) {
             RECT& r = g_shortcutRects[i];
             const ShortcutDef& sc = g_shortcuts[i];
 
-            COLORREF fill = (i == g_pressedShort) ? CLR_KEY_PRESS
-                          : (i == g_hoveredShort) ? CLR_KEY_HOVER
-                          : (i == 7 && g_autoStart) ? CLR_KEY_ACTIVE  // AutoStart ON = highlighted
-                          : CLR_KEY_BG;
+            COLORREF fill;
+            if (i == g_pressedShort)               fill = CLR_KEY_PRESS;
+            else if (i == g_hoveredShort)           fill = CLR_KEY_HOVER;
+            else if (i == 7 && g_autoStart)         fill = CLR_KEY_ACTIVE;
+            else                                    fill = CLR_KEY_SPECIAL;
+
+            // Shadow
+            HBRUSH shadowBr = CreateSolidBrush(CLR_KEY_BORDER_BOTTOM);
+            HPEN nullPen2 = (HPEN)GetStockObject(NULL_PEN);
+            HBRUSH oldBr3 = (HBRUSH)SelectObject(memDC, shadowBr);
+            HPEN oldPn3 = (HPEN)SelectObject(memDC, nullPen2);
+            RoundRect(memDC, r.left, r.top + 2, r.right, r.bottom + 2, 10, 10);
+            SelectObject(memDC, oldBr3);
+            SelectObject(memDC, oldPn3);
+            DeleteObject(shadowBr);
 
             HBRUSH br = CreateSolidBrush(fill);
-            HPEN pn = CreatePen(PS_SOLID, 1, (i == g_hoveredShort || i == g_pressedShort) ? CLR_KEY_PRESS : CLR_KEY_BORDER);
+            HPEN pn = CreatePen(PS_SOLID, 1,
+                (i == g_hoveredShort || i == g_pressedShort) ? CLR_KEY_PRESS : CLR_KEY_BORDER);
             HBRUSH oldBr = (HBRUSH)SelectObject(memDC, br);
             HPEN oldPn = (HPEN)SelectObject(memDC, pn);
-            RoundRect(memDC, r.left, r.top, r.right, r.bottom, 8, 8);
+            RoundRect(memDC, r.left, r.top, r.right, r.bottom, 10, 10);
             SelectObject(memDC, oldBr);
             SelectObject(memDC, oldPn);
             DeleteObject(br);
             DeleteObject(pn);
 
-            // Label (top-centered)
+            // Label (centered vertically if no hint, otherwise top-centered)
             HFONT oldF = (HFONT)SelectObject(memDC, g_hFontSmall);
             SetTextColor(memDC, CLR_TEXT);
             SetBkMode(memDC, TRANSPARENT);
 
             SIZE tsz;
             GetTextExtentPoint32W(memDC, sc.label, (int)wcslen(sc.label), &tsz);
-            int tx = r.left + (r.right - r.left - tsz.cx) / 2;
-            int ty = r.top + 4;
-            TextOutW(memDC, tx, ty, sc.label, (int)wcslen(sc.label));
+            int bh = r.bottom - r.top;
+            int tx2 = r.left + (r.right - r.left - tsz.cx) / 2;
+            int ty2 = r.top + (bh / 2) - tsz.cy - 2;
+            TextOutW(memDC, tx2, ty2, sc.label, (int)wcslen(sc.label));
 
             // Hint (bottom, dimmed)
             SetTextColor(memDC, CLR_TEXT_DIM);
             SIZE hsz;
             GetTextExtentPoint32W(memDC, sc.hint, (int)wcslen(sc.hint), &hsz);
             int hx = r.left + (r.right - r.left - hsz.cx) / 2;
-            int hy = r.bottom - 4 - hsz.cy;
+            int hy = r.top + (bh / 2) + 2;
             TextOutW(memDC, hx, hy, sc.hint, (int)wcslen(sc.hint));
 
             SelectObject(memDC, oldF);
@@ -920,43 +1012,50 @@ void SendKeyPress(const KeyDef& key, bool down) {
 void UpdateModifierState() {
     for (int i = 0; i < g_totalKeys; i++) {
         KeyDef& kd = g_keys[i];
-        if (kd.isToggle && kd.vk == VK_CAPITAL) {
+        BYTE vk = kd.vk;
+        if (kd.isToggle && vk == VK_CAPITAL) {
             g_keyStates[i].active = g_capsLock;
-        } else if (kd.vk == VK_LSHIFT || kd.vk == VK_RSHIFT) {
-            g_keyStates[i].active = g_shiftDown || g_shiftLatched;
-        } else if (kd.vk == VK_LCONTROL || kd.vk == VK_RCONTROL) {
-            g_keyStates[i].active = g_ctrlDown || g_ctrlLatched;
-        } else if (kd.vk == VK_LMENU || kd.vk == VK_RMENU) {
-            g_keyStates[i].active = g_altDown || g_altLatched;
-        } else if (kd.vk == VK_LWIN || kd.vk == VK_RWIN) {
-            g_keyStates[i].active = g_winDown || g_winLatched;
-        } else if (kd.vk == VK_APPS) {
-            g_keyStates[i].active = g_showQuickPanel;
+        } else if (vk == VK_LSHIFT) {
+            g_keyStates[i].active = g_shiftDown || g_shiftLatchedVk == VK_LSHIFT;
+        } else if (vk == VK_RSHIFT) {
+            g_keyStates[i].active = g_shiftDown || g_shiftLatchedVk == VK_RSHIFT;
+        } else if (vk == VK_LCONTROL) {
+            g_keyStates[i].active = g_ctrlDown || g_ctrlLatchedVk == VK_LCONTROL;
+        } else if (vk == VK_RCONTROL) {
+            g_keyStates[i].active = g_ctrlDown || g_ctrlLatchedVk == VK_RCONTROL;
+        } else if (vk == VK_LMENU) {
+            g_keyStates[i].active = g_altDown || g_altLatchedVk == VK_LMENU;
+        } else if (vk == VK_RMENU) {
+            g_keyStates[i].active = g_altDown || g_altLatchedVk == VK_RMENU;
+        } else if (vk == VK_LWIN) {
+            g_keyStates[i].active = g_winDown || g_winLatchedVk == VK_LWIN;
+        } else if (vk == VK_RWIN) {
+            g_keyStates[i].active = g_winDown || g_winLatchedVk == VK_RWIN;
         }
     }
 }
 
 // ── Release all latched modifiers ──────────────────────────────────────────
 void ReleaseLatchedModifiers(HWND hwnd) {
-    if (g_shiftLatched) {
-        KeyDef shiftKey = {L"", nullptr, VK_LSHIFT, 0, true, false, false};
+    if (g_shiftLatchedVk) {
+        KeyDef shiftKey = {L"", nullptr, g_shiftLatchedVk, 0, true, false, false};
         SendKeyPress(shiftKey, false);
-        g_shiftLatched = false;
+        g_shiftLatchedVk = 0;
     }
-    if (g_ctrlLatched) {
-        KeyDef ctrlKey = {L"", nullptr, VK_LCONTROL, 0, true, false, false};
+    if (g_ctrlLatchedVk) {
+        KeyDef ctrlKey = {L"", nullptr, g_ctrlLatchedVk, 0, true, false, false};
         SendKeyPress(ctrlKey, false);
-        g_ctrlLatched = false;
+        g_ctrlLatchedVk = 0;
     }
-    if (g_altLatched) {
-        KeyDef altKey = {L"", nullptr, VK_LMENU, 0, true, false, false};
+    if (g_altLatchedVk) {
+        KeyDef altKey = {L"", nullptr, g_altLatchedVk, 0, true, false, false};
         SendKeyPress(altKey, false);
-        g_altLatched = false;
+        g_altLatchedVk = 0;
     }
-    if (g_winLatched) {
-        KeyDef winKey = {L"", nullptr, VK_LWIN, 0, true, false, false};
+    if (g_winLatchedVk) {
+        KeyDef winKey = {L"", nullptr, g_winLatchedVk, 0, true, false, false};
         SendKeyPress(winKey, false);
-        g_winLatched = false;
+        g_winLatchedVk = 0;
     }
     UpdateModifierState();
     InvalidateRect(hwnd, nullptr, FALSE);
@@ -966,10 +1065,10 @@ void ReleaseLatchedModifiers(HWND hwnd) {
 void LatchModifier(BYTE vk, HWND hwnd) {
     KeyDef modKey = {L"", nullptr, vk, 0, true, false, false};
     SendKeyPress(modKey, true);  // press and hold in the system
-    if (vk == VK_LSHIFT || vk == VK_RSHIFT)      g_shiftLatched = true;
-    else if (vk == VK_LCONTROL || vk == VK_RCONTROL) g_ctrlLatched = true;
-    else if (vk == VK_LMENU || vk == VK_RMENU)   g_altLatched = true;
-    else if (vk == VK_LWIN || vk == VK_RWIN)     g_winLatched = true;
+    if (vk == VK_LSHIFT || vk == VK_RSHIFT)      g_shiftLatchedVk = vk;
+    else if (vk == VK_LCONTROL || vk == VK_RCONTROL) g_ctrlLatchedVk = vk;
+    else if (vk == VK_LMENU || vk == VK_RMENU)   g_altLatchedVk = vk;
+    else if (vk == VK_LWIN || vk == VK_RWIN)     g_winLatchedVk = vk;
     UpdateModifierState();
     InvalidateRect(hwnd, nullptr, FALSE);
 }
@@ -978,20 +1077,20 @@ void LatchModifier(BYTE vk, HWND hwnd) {
 void UnlatchModifier(BYTE vk, HWND hwnd) {
     KeyDef modKey = {L"", nullptr, vk, 0, true, false, false};
     SendKeyPress(modKey, false);  // release
-    if (vk == VK_LSHIFT || vk == VK_RSHIFT)      g_shiftLatched = false;
-    else if (vk == VK_LCONTROL || vk == VK_RCONTROL) g_ctrlLatched = false;
-    else if (vk == VK_LMENU || vk == VK_RMENU)   g_altLatched = false;
-    else if (vk == VK_LWIN || vk == VK_RWIN)     g_winLatched = false;
+    if (vk == VK_LSHIFT || vk == VK_RSHIFT)      g_shiftLatchedVk = 0;
+    else if (vk == VK_LCONTROL || vk == VK_RCONTROL) g_ctrlLatchedVk = 0;
+    else if (vk == VK_LMENU || vk == VK_RMENU)   g_altLatchedVk = 0;
+    else if (vk == VK_LWIN || vk == VK_RWIN)     g_winLatchedVk = 0;
     UpdateModifierState();
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
 // ── Check if a key is currently latched ────────────────────────────────────
 bool IsLatched(BYTE vk) {
-    if (vk == VK_LSHIFT || vk == VK_RSHIFT)      return g_shiftLatched;
-    if (vk == VK_LCONTROL || vk == VK_RCONTROL)   return g_ctrlLatched;
-    if (vk == VK_LMENU || vk == VK_RMENU)          return g_altLatched;
-    if (vk == VK_LWIN || vk == VK_RWIN)            return g_winLatched;
+    if (vk == VK_LSHIFT || vk == VK_RSHIFT)      return g_shiftLatchedVk == vk;
+    if (vk == VK_LCONTROL || vk == VK_RCONTROL)   return g_ctrlLatchedVk == vk;
+    if (vk == VK_LMENU || vk == VK_RMENU)          return g_altLatchedVk == vk;
+    if (vk == VK_LWIN || vk == VK_RWIN)            return g_winLatchedVk == vk;
     return false;
 }
 
@@ -1008,6 +1107,24 @@ void StopKeyRepeat(HWND hwnd) {
         KillTimer(hwnd, TIMER_REPEAT);
         g_repeatPhase = 0;
     }
+}
+
+// ── Recreate fonts at current g_fontSize ────────────────────────────────────
+void RecreateFonts() {
+    if (g_hFont) DeleteObject(g_hFont);
+    if (g_hFontSmall) DeleteObject(g_hFontSmall);
+    g_hFont = CreateFontW(
+        g_fontSize, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"
+    );
+    int smallSz = g_fontSize - 6;
+    if (smallSz < 8) smallSz = 8;
+    g_hFontSmall = CreateFontW(
+        smallSz, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"
+    );
 }
 
 // ── Config file path helper ────────────────────────────────────────────────
@@ -1029,7 +1146,7 @@ void LoadConfig() {
     wchar_t line[128];
     while (fgetws(line, 128, f)) {
         UINT mod = 0, vk = 0;
-        int w = 0, h = 0;
+        int w = 0, h = 0, fs = 0;
         if (swscanf(line, L"hotkey_mod=%u", &mod) == 1)
             g_toggleHotkeyMod = mod;
         if (swscanf(line, L"hotkey_vk=%u", &vk) == 1)
@@ -1038,6 +1155,8 @@ void LoadConfig() {
             g_windowWidth = w;
         if (swscanf(line, L"window_h=%d", &h) == 1)
             g_windowHeight = h;
+        if (swscanf(line, L"font_size=%d", &fs) == 1 && fs >= 8 && fs <= 40)
+            g_fontSize = fs;
     }
     fclose(f);
 }
@@ -1048,9 +1167,9 @@ void SaveConfig() {
     GetConfigPath(path, MAX_PATH);
     FILE* f = _wfopen(path, L"w, ccs=UTF-8");
     if (!f) return;
-    fwprintf(f, L"hotkey_mod=%u\nhotkey_vk=%u\nwindow_w=%d\nwindow_h=%d\n",
+    fwprintf(f, L"hotkey_mod=%u\nhotkey_vk=%u\nwindow_w=%d\nwindow_h=%d\nfont_size=%d\n",
              g_toggleHotkeyMod, g_toggleHotkeyVk,
-             g_windowWidth, g_windowHeight);
+             g_windowWidth, g_windowHeight, g_fontSize);
     fclose(f);
 }
 
@@ -1142,11 +1261,11 @@ LRESULT CALLBACK HotkeyPickerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc; GetClientRect(hwnd, &rc);
 
-        HBRUSH bg = CreateSolidBrush(RGB(40, 40, 40));
+        HBRUSH bg = CreateSolidBrush(CLR_BG);
         FillRect(hdc, &rc, bg);
         DeleteObject(bg);
 
-        HFONT fnt = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        HFONT fnt = CreateFontW(18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         HFONT oldF = (HFONT)SelectObject(hdc, fnt);
@@ -1194,7 +1313,7 @@ void ShowHotkeyPicker(HWND parent) {
         wc.lpfnWndProc   = HotkeyPickerProc;
         wc.hInstance     = g_hInst;
         wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-        wc.hbrBackground = CreateSolidBrush(RGB(40, 40, 40));
+        wc.hbrBackground = CreateSolidBrush(CLR_BG);
         wc.lpszClassName = PICKER_CLASS;
         RegisterClassW(&wc);
     }

@@ -8,17 +8,17 @@ Virtual keyboard Windows native — dibuat dengan Win32 API dan C++17. Tanpa dep
 
 ## Fitur
 
-- **QWERTZ layout** (Y↔Z swap) dengan 61 tombol
+- **65 tombol** — QWERTY layout (baris 4: Ctrl, Win, Alt, Spasi, Alt, Ctrl, ←, ↑, ↓, →, Home, End)
+- **Dual-label keys** — setiap tombol dengan dua label (huruf besar/kecil, simbol) menampilkan keduanya secara berpasangan; posisi bertukar saat Shift aktif
+- **Sidebar permanen** — panel pintasan selalu tampil di kanan (10 tombol, 5 baris × 2 kolom)
+- **Font size control** — tombol **Font + / Font −** di sidebar, ukuran tersimpan di `vkbd.cfg`
 - **Dark theme** — ala Windows 11 on-screen keyboard
-- **Sticky modifiers** — Shift, Ctrl, Alt, Win bisa di-latch (klik sekali = tahan)
+- **Sticky modifiers** — Shift, Ctrl, Alt, Win bisa di-latch (highlight biru hanya di tombol spesifik kiri/kanan)
 - **Hold-to-repeat** — tahan Backspace/Space/huruf untuk auto-repeat (400ms delay awal, 50ms repeat)
-- **Sidebar shortcut** — klik tombol **Menu** untuk toggle panel pintasan di kanan (6 tombol, 2 kolom)
-  - Copy `Ctrl+C` — Paste `Ctrl+V`
-  - Cut `Ctrl+X` — Undo `Ctrl+Z`
-  - Redo `Ctrl+Y` — Select All `Ctrl+A`
 - **Dynamic resize** — window bisa di-resize, key menyesuaikan
 - **Always on top** — tidak mencuri fokus (`WS_EX_NOACTIVATE`)
 - **Caps Lock sync** — membaca status Caps Lock sistem setiap 500ms
+- **Config persistence** — `vkbd.cfg` menyimpan hotkey, ukuran window, dan ukuran font
 
 ---
 
@@ -53,15 +53,15 @@ Flag `-municode` **wajib** karena entry point `wWinMain`.
 
 ```
 D:\Codingan\C++\virtual keyboard\
-├── main.cpp      # semua kode (single-file)
+├── main.cpp      # semua kode (single-file, ~1365 baris)
 ├── build.bat     # build script MSVC
+├── app.manifest  # DPI manifest (PerMonitorV2)
+├── resource.rc   # icon + manifest resource
+├── vkbd.cfg      # konfigurasi runtime (git-ignored)
 ├── vkbd.exe      # output binary
+├── AGENTS.md     # panduan untuk agent AI
 └── README.md
 ```
-
-| File | Lines | Deskripsi |
-|------|-------|-----------|
-| `main.cpp` | ~900 | Entry point, window proc, layout, paint, input, shortcut panel |
 
 ---
 
@@ -70,12 +70,10 @@ D:\Codingan\C++\virtual keyboard\
 | Baris | Tombol |
 |-------|--------|
 | 0 | Esc, 1–0, -, =, **Bcksp** |
-| 1 | Tab, Q–P (dengan Z↔Y swap), [, ], \ |
+| 1 | Tab, Q–P, [, ], \ |
 | 2 | Caps, A–L, ;, ', Enter |
-| 3 | Shift, Y–M, ,, ., /, Shift |
-| 4 | Ctrl, Win, Alt, **Space**, Alt, Win, **Menu**, Ctrl |
-
-**Menu** = toggle sidebar shortcut (highlight biru saat aktif)
+| 3 | Shift, Z–M, ,, ., /, Shift |
+| 4 | Ctrl, Win, Alt, **Space**, Alt, Ctrl, **←**, **↑**, **↓**, **→**, **Home**, **End** |
 
 ---
 
@@ -91,10 +89,16 @@ D:\Codingan\C++\virtual keyboard\
 ├──────────┼──────────┤
 │   Redo   │ Sel.All  │
 │  Ctrl+Y  │  Ctrl+A  │
+├──────────┼──────────┤
+│   Hide   │AutoStart │
+│ Ctrl+Sh+K│ ON / OFF │
+├──────────┼──────────┤
+│  Font +  │  Font −  │
+│   20pt   │   20pt   │
 └──────────┴──────────┘
 ```
 
-Window melebar otomatis saat panel dibuka (main keys tetap fixed).
+Sidebar selalu tampil di sisi kanan. **Hide** menyembunyikan window, **AutoStart** mendaftarkan ke registry Run key. **Font + / −** mengubah ukuran huruf (8–40pt) dan tersimpan otomatis.
 
 ---
 
