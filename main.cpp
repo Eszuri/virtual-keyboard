@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <cwctype>
+#include <cstring>
 
 // ── Constants ────────────────────────────────────────────────────────────────
 constexpr int   KEY_ROWS          = 5;
@@ -38,6 +40,20 @@ constexpr UINT_PTR TIMER_CAPSLOCK   = 1;
 constexpr UINT_PTR TIMER_REPEAT     = 2;
 constexpr UINT     REPEAT_DELAY     = 400;
 constexpr UINT     REPEAT_RATE      = 50;
+
+// ── Global hotkey — toggle show/hide keyboard (runtime configurable) ──────────
+// Defaults (used if no vkbd.cfg found):
+constexpr UINT  TOGGLE_HOTKEY_DEF_MOD = MOD_CONTROL | MOD_SHIFT;
+constexpr UINT  TOGGLE_HOTKEY_DEF_VK  = 'K';
+constexpr int   TOGGLE_HOTKEY_ID      = 0x4000;
+
+// Runtime state (may be changed via UI)
+UINT  g_toggleHotkeyMod = TOGGLE_HOTKEY_DEF_MOD;
+UINT  g_toggleHotkeyVk  = TOGGLE_HOTKEY_DEF_VK;
+
+// ── Configurable sidebar toggle button label ──────────────────────────────────
+constexpr const wchar_t* TOGGLE_BTN_LABEL = L"Hide";   // sidebar button label
+constexpr const wchar_t* TOGGLE_BTN_HINT  = L"Show/Hide";  // hint text
 
 // ── Key Definition ───────────────────────────────────────────────────────────
 struct KeyDef {
@@ -66,9 +82,9 @@ struct ShortcutDef {
     BYTE  vk;
 };
 
-constexpr int   SHORTCUT_COUNT   = 6;
+constexpr int   SHORTCUT_COUNT   = 7;
 constexpr int   SHORTCUT_COLS    = 2;     // 2 columns in sidebar
-constexpr int   SHORTCUT_ROWS    = 3;     // 3 rows
+constexpr int   SHORTCUT_ROWS    = 4;     // 4 rows (3 for shortcuts + 1 for toggle)
 constexpr int   SIDEBAR_WIDTH    = 280;   // wider for 2 columns
 
 // ── Forward declarations ─────────────────────────────────────────────────────
@@ -87,7 +103,12 @@ void     StopKeyRepeat(HWND hwnd);
 void     SendShortcut(const ShortcutDef& sc);
 int      HitTestShortcut(POINT pt);
 void     ResizeWindowForPanel(HWND hwnd);
-// ── Global state ─────────────────────────────────────────────────────────────
+void     LoadConfig();
+void     SaveConfig();
+void     UpdateToggleHint();
+void     ShowHotkeyPicker(HWND parent);
+LRESULT CALLBACK HotkeyPickerProc(HWND, UINT, WPARAM, LPARAM);
+// ── Global state
 HINSTANCE   g_hInst;
 HFONT       g_hFont      = nullptr;
 HFONT       g_hFontSmall = nullptr;
@@ -115,7 +136,7 @@ RECT        g_shortcutRects[SHORTCUT_COUNT] = {};
 int         g_hoveredShort   = -1;
 int         g_pressedShort   = -1;
 
-// ── Keyboard Layout ──────────────────────────────────────────────────────────
+// ── Keyboard Layout
 // QWERTZ (Y↔Z swapped) with standard US symbols — 61 keys
 KeyDef g_keys[] = {
     // Row 0: Esc, 1-0, -, =, Backspace (14 keys)
@@ -215,6 +236,7 @@ ShortcutDef g_shortcuts[SHORTCUT_COUNT] = {
     {L"Undo",       L"Ctrl+Z",   1, 'Z'},
     {L"Redo",       L"Ctrl+Y",   1, 'Y'},
     {L"Select All", L"Ctrl+A",   1, 'A'},
+    {TOGGLE_BTN_LABEL, TOGGLE_BTN_HINT, 0, 0},   // toggle show/hide (index 6)
 };
 // ── Entry Point ──────────────────────────────────────────────────────────────
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
@@ -237,6 +259,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     WNDCLASSW wc = {};
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = hInstance;
+    wc.hIcon         = LoadIconW(hInstance, MAKEINTRESOURCEW(1));
     wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
     wc.hbrBackground = CreateSolidBrush(CLR_BG);
     wc.lpszClassName = CLASS_NAME;
@@ -260,6 +283,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow) {
     );
 
     if (!hwnd) return 1;
+
+    // Load saved config (overrides defaults — must load before RegisterHotKey)
+    LoadConfig();
+
+    // Register global hotkey for show/hide toggle
+    if (!RegisterHotKey(hwnd, TOGGLE_HOTKEY_ID,
+                        g_toggleHotkeyMod, g_toggleHotkeyVk)) {
+        // Hotkey may be taken by another app — non-fatal, sidebar button still works
+    }
+
+    // Build hotkey hint string from current runtime settings
+    UpdateToggleHint();
 
     // Read Caps Lock initial state
     g_capsLock = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
@@ -389,7 +424,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_pressedShort = si;
             InvalidateRect(hwnd, &g_shortcutRects[si], FALSE);
             SetCapture(hwnd);
-            SendShortcut(g_shortcuts[si]);
+            if (si == 6) {
+                // Hide keyboard (toggle button)
+                ShowWindow(hwnd, SW_HIDE);
+            } else {
+                SendShortcut(g_shortcuts[si]);
+            }
             return 0;
         }
 
@@ -435,6 +475,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 // Start key repeat for hold-to-repeat
                 StartKeyRepeat(hwnd, idx);
             }
+        }
+        return 0;
+    }
+
+    case WM_RBUTTONDOWN: {
+        POINT pt = {LOWORD(lParam), HIWORD(lParam)};
+        int si = HitTestShortcut(pt);
+        if (si == 6) {
+            // Right-click on Hide button → reconfigure hotkey
+            ShowHotkeyPicker(hwnd);
         }
         return 0;
     }
@@ -501,11 +551,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     }
 
+    case WM_HOTKEY: {
+        if (wParam == TOGGLE_HOTKEY_ID) {
+            // Toggle show/hide
+            if (IsWindowVisible(hwnd))
+                ShowWindow(hwnd, SW_HIDE);
+            else
+                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        return 0;
+    }
+
     case WM_CLOSE:
-        DestroyWindow(hwnd);
+        // Hide instead of closing — app stays alive for hotkey toggle
+        ShowWindow(hwnd, SW_HIDE);
         return 0;
 
     case WM_DESTROY:
+        UnregisterHotKey(hwnd, TOGGLE_HOTKEY_ID);
         KillTimer(hwnd, TIMER_CAPSLOCK);
         KillTimer(hwnd, TIMER_REPEAT);
         PostQuitMessage(0);
@@ -905,5 +968,202 @@ void StopKeyRepeat(HWND hwnd) {
     if (g_repeatPhase > 0) {
         KillTimer(hwnd, TIMER_REPEAT);
         g_repeatPhase = 0;
+    }
+}
+
+// ── Config file path helper ────────────────────────────────────────────────
+static wchar_t g_hotkeyHintStr[32] = {};  // shared hint buffer
+
+void GetConfigPath(wchar_t* buf, int bufSize) {
+    GetModuleFileNameW(nullptr, buf, bufSize);
+    wchar_t* lastSlash = wcsrchr(buf, L'\\');
+    if (lastSlash) *(lastSlash + 1) = L'\0';
+    wcscat_s(buf, bufSize, L"vkbd.cfg");
+}
+
+// ── Load hotkey config from vkbd.cfg ───────────────────────────────────────
+void LoadConfig() {
+    wchar_t path[MAX_PATH];
+    GetConfigPath(path, MAX_PATH);
+    FILE* f = _wfopen(path, L"r, ccs=UTF-8");
+    if (!f) return;
+    wchar_t line[128];
+    while (fgetws(line, 128, f)) {
+        UINT mod = 0, vk = 0;
+        if (swscanf(line, L"hotkey_mod=%u", &mod) == 1)
+            g_toggleHotkeyMod = mod;
+        if (swscanf(line, L"hotkey_vk=%u", &vk) == 1)
+            g_toggleHotkeyVk = vk;
+    }
+    fclose(f);
+}
+
+// ── Save hotkey config to vkbd.cfg ─────────────────────────────────────────
+void SaveConfig() {
+    wchar_t path[MAX_PATH];
+    GetConfigPath(path, MAX_PATH);
+    FILE* f = _wfopen(path, L"w, ccs=UTF-8");
+    if (!f) return;
+    fwprintf(f, L"hotkey_mod=%u\nhotkey_vk=%u\n",
+             g_toggleHotkeyMod, g_toggleHotkeyVk);
+    fclose(f);
+}
+
+// ── Rebuild the sidebar hint string from current hotkey settings ───────────
+void UpdateToggleHint() {
+    int pos = 0;
+    g_hotkeyHintStr[0] = L'\0';
+    if (g_toggleHotkeyMod & MOD_CONTROL) { wcscpy(g_hotkeyHintStr, L"Ctrl+"); pos = 5; }
+    if (g_toggleHotkeyMod & MOD_SHIFT)   { wcscpy(g_hotkeyHintStr + pos, L"Shift+"); pos += 6; }
+    if (g_toggleHotkeyMod & MOD_ALT)     { wcscpy(g_hotkeyHintStr + pos, L"Alt+");  pos += 4; }
+    if (g_toggleHotkeyMod & MOD_WIN)     { wcscpy(g_hotkeyHintStr + pos, L"Win+");  pos += 4; }
+
+    // Append key name
+    UINT vk = g_toggleHotkeyVk;
+    if (vk == 0 && pos == 0) {
+        wcscpy(g_hotkeyHintStr, L"(none)");
+    } else if (vk >= 'A' && vk <= 'Z') {
+        g_hotkeyHintStr[pos++] = (wchar_t)vk;
+        g_hotkeyHintStr[pos] = L'\0';
+    } else if (vk >= '0' && vk <= '9') {
+        g_hotkeyHintStr[pos++] = (wchar_t)vk;
+        g_hotkeyHintStr[pos] = L'\0';
+    } else if (vk >= VK_F1 && vk <= VK_F12) {
+        swprintf(g_hotkeyHintStr + pos, 8, L"F%d", vk - VK_F1 + 1);
+    } else if (vk != 0) {
+        swprintf(g_hotkeyHintStr + pos, 10, L"0x%X", vk);
+    }
+    g_shortcuts[6].hint = g_hotkeyHintStr;
+}
+
+// ── Hotkey Picker Dialog ───────────────────────────────────────────────────
+LRESULT CALLBACK HotkeyPickerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        // Center on parent
+        HWND parent = GetWindow(hwnd, GW_OWNER);
+        if (parent) {
+            RECT pr, dr;
+            GetWindowRect(parent, &pr);
+            GetWindowRect(hwnd, &dr);
+            int dw = dr.right - dr.left, dh = dr.bottom - dr.top;
+            SetWindowPos(hwnd, nullptr,
+                pr.left + ((pr.right - pr.left) - dw) / 2,
+                pr.top  + ((pr.bottom - pr.top) - dh) / 2,
+                0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        }
+        return 0;
+    }
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN: {
+        UINT vk = (UINT)wParam;
+        // Ignore pure modifier releases/presses
+        if (vk == VK_CONTROL || vk == VK_SHIFT || vk == VK_MENU ||
+            vk == VK_LWIN || vk == VK_RWIN ||
+            vk == VK_LCONTROL || vk == VK_RCONTROL ||
+            vk == VK_LSHIFT || vk == VK_RSHIFT ||
+            vk == VK_LMENU || vk == VK_RMENU)
+            return 0;
+        // Escape cancels
+        if (vk == VK_ESCAPE) { DestroyWindow(hwnd); return 0; }
+
+        // Read modifier states
+        UINT newMod = 0;
+        if (GetKeyState(VK_CONTROL) & 0x8000) newMod |= MOD_CONTROL;
+        if (GetKeyState(VK_SHIFT)   & 0x8000) newMod |= MOD_SHIFT;
+        if (GetKeyState(VK_MENU)    & 0x8000) newMod |= MOD_ALT;
+        if ((GetKeyState(VK_LWIN) | GetKeyState(VK_RWIN)) & 0x8000) newMod |= MOD_WIN;
+
+        // Apply to owner
+        HWND owner = GetWindow(hwnd, GW_OWNER);
+        if (owner) {
+            UnregisterHotKey(owner, TOGGLE_HOTKEY_ID);
+            g_toggleHotkeyMod = newMod;
+            g_toggleHotkeyVk  = vk;
+            RegisterHotKey(owner, TOGGLE_HOTKEY_ID,
+                          g_toggleHotkeyMod, g_toggleHotkeyVk);
+            UpdateToggleHint();
+            SaveConfig();
+            // Force sidebar to repaint with new hint text
+            InvalidateRect(owner, &g_shortcutRects[6], FALSE);
+            InvalidateRect(owner, nullptr, FALSE);
+            UpdateWindow(owner);
+        }
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rc; GetClientRect(hwnd, &rc);
+
+        HBRUSH bg = CreateSolidBrush(RGB(40, 40, 40));
+        FillRect(hdc, &rc, bg);
+        DeleteObject(bg);
+
+        HFONT fnt = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        HFONT oldF = (HFONT)SelectObject(hdc, fnt);
+        SetBkMode(hdc, TRANSPARENT);
+
+        // Current hotkey
+        SetTextColor(hdc, CLR_TEXT_DIM);
+        wchar_t cur[64];
+        swprintf(cur, 64, L"Current: %s", g_hotkeyHintStr);
+        SIZE sz;
+        GetTextExtentPoint32W(hdc, cur, (int)wcslen(cur), &sz);
+        TextOutW(hdc, (rc.right - sz.cx) / 2, 20, cur, (int)wcslen(cur));
+
+        // Instruction
+        SetTextColor(hdc, CLR_TEXT);
+        const wchar_t* instr = L"Press new key combination...";
+        GetTextExtentPoint32W(hdc, instr, (int)wcslen(instr), &sz);
+        TextOutW(hdc, (rc.right - sz.cx) / 2, 52, instr, (int)wcslen(instr));
+
+        // Cancel hint
+        SetTextColor(hdc, CLR_TEXT_DIM);
+        const wchar_t* esc = L"(Esc to cancel)";
+        GetTextExtentPoint32W(hdc, esc, (int)wcslen(esc), &sz);
+        TextOutW(hdc, (rc.right - sz.cx) / 2, 82, esc, (int)wcslen(esc));
+
+        SelectObject(hdc, oldF);
+        DeleteObject(fnt);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+// ── Show hotkey picker popup ───────────────────────────────────────────────
+void ShowHotkeyPicker(HWND parent) {
+    const wchar_t PICKER_CLASS[] = L"HotkeyPickerWnd";
+    // Register once (check if already registered)
+    WNDCLASSW wcTest = {};
+    if (!GetClassInfoW(g_hInst, PICKER_CLASS, &wcTest)) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc   = HotkeyPickerProc;
+        wc.hInstance     = g_hInst;
+        wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = CreateSolidBrush(RGB(40, 40, 40));
+        wc.lpszClassName = PICKER_CLASS;
+        RegisterClassW(&wc);
+    }
+
+    HWND dlg = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_DLGMODALFRAME,
+        PICKER_CLASS, L"Configure Hotkey",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        0, 0, 360, 170,
+        parent, nullptr, g_hInst, nullptr);
+
+    if (dlg) {
+        ShowWindow(dlg, SW_SHOW);
+        UpdateWindow(dlg);
+        SetForegroundWindow(dlg);
     }
 }

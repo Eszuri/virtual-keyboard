@@ -1,2 +1,8 @@
+# Build outputs
 *.exe
 *.obj
+*.o
+*.res
+
+# Runtime config (user-specific)
+*.cfg
